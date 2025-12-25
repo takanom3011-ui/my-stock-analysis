@@ -27,6 +27,7 @@ days_to_check = st.sidebar.slider("検索期間 (過去X日)", 1, 30, 10)
 # 2. ロジック関数 (修正版)
 # ==========================================
 def calculate_indicators(df):
+    # 指標計算
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
@@ -40,14 +41,28 @@ def calculate_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df
 
+# 【重要】どんなデータ形式が来ても強制的に数値にする関数
+def safe_float(val):
+    try:
+        # 配列やSeriesなら中身を取り出す
+        if isinstance(val, (pd.Series, np.ndarray, list)):
+            if hasattr(val, "item"):
+                return float(val.item())
+            if len(val) > 0:
+                return float(val[0])
+        return float(val)
+    except:
+        return 0.0
+
 def analyze_recent_week(ticker, market_type, check_days):
     try:
         # データ取得
         df = yf.download(ticker, period="6mo", progress=False)
         
         # 【重要修正】データの「2重カラム」を強制的に1段にする
+        # columns.nlevels > 1 はMultiIndexであることを意味します
         if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+             df.columns = df.columns.get_level_values(0)
             
         if len(df) < 60: return [], None
         
@@ -62,41 +77,27 @@ def analyze_recent_week(ticker, market_type, check_days):
         daily_signals = []
         start_idx = len(df) - check_days
         
-        # 安全に数値を取り出す
-        try:
-            last_val = close[-1]
-            if isinstance(last_val, (np.ndarray, pd.Series)):
-                last_val = last_val.item()
-            latest_price = round(float(last_val), 2)
-        except:
-            latest_price = 0.0
+        # 安全に数値を取り出す (生存確認用)
+        latest_price = safe_float(close[-1])
         
         for i in range(start_idx, len(df)):
             if i < 0: continue
             signals = []
             
-            # 各指標の値を取得 (配列の場合はスカラーに変換)
-            current_macd = macd[i].item() if isinstance(macd[i], np.ndarray) else macd[i]
-            current_hist = hist[i].item() if isinstance(hist[i], np.ndarray) else hist[i]
-            current_rsi = rsi[i].item() if isinstance(rsi[i], np.ndarray) else rsi[i]
-            
-            # 株価の取得 (ここがエラーの原因だった箇所)
-            raw_close = close[i]
-            if isinstance(raw_close, (np.ndarray, pd.Series)):
-                current_close = raw_close.item()
-            else:
-                current_close = raw_close
+            # 各指標の値を取得 (配列の場合は強制的にスカラーに変換)
+            current_macd = safe_float(macd[i])
+            current_hist = safe_float(hist[i])
+            current_rsi = safe_float(rsi[i])
+            current_close = safe_float(close[i])
                 
             current_date = dates[i].strftime('%Y-%m-%d')
             
-            prev_hist = hist[i-1].item() if isinstance(hist[i-1], np.ndarray) else hist[i-1]
-            prev_macd = macd[i-1].item() if isinstance(macd[i-1], np.ndarray) else macd[i-1]
+            prev_hist = safe_float(hist[i-1])
+            prev_macd = safe_float(macd[i-1])
             
             # Signal列の取得
-            raw_sig = df['Signal'].values[i-1]
-            prev_sig = raw_sig.item() if isinstance(raw_sig, np.ndarray) else raw_sig
-            raw_curr_sig = df['Signal'].values[i]
-            curr_sig = raw_curr_sig.item() if isinstance(raw_curr_sig, np.ndarray) else raw_curr_sig
+            prev_sig = safe_float(df['Signal'].values[i-1])
+            curr_sig = safe_float(df['Signal'].values[i])
 
             # === A. 買いシグナル ===
             # 1. 2nd Attempt
@@ -144,8 +145,8 @@ def analyze_recent_week(ticker, market_type, check_days):
             if current_hist > 0 and current_hist > prev_hist:
                 recent_squeeze = False
                 for k in range(2, 7):
-                    h = hist[i-k].item() if isinstance(hist[i-k], np.ndarray) else hist[i-k]
-                    m = macd[i-k].item() if isinstance(macd[i-k], np.ndarray) else macd[i-k]
+                    h = safe_float(hist[i-k])
+                    m = safe_float(macd[i-k])
                     if h > 0 and h < (abs(m) * 0.10):
                         recent_squeeze = True
                         break
@@ -153,8 +154,8 @@ def analyze_recent_week(ticker, market_type, check_days):
                     signals.append("BUY: Re-entry")
 
             # === B. 売りシグナル ===
-            price_5d = close[i-5].item() if isinstance(close[i-5], np.ndarray) else close[i-5]
-            rsi_5d = rsi[i-5].item() if isinstance(rsi[i-5], np.ndarray) else rsi[i-5]
+            price_5d = safe_float(close[i-5])
+            rsi_5d = safe_float(rsi[i-5])
             
             # 1. RSI Divergence
             if (current_close > price_5d) and (current_rsi < rsi_5d) and (current_rsi > 60):
@@ -182,7 +183,7 @@ def analyze_recent_week(ticker, market_type, check_days):
         return daily_signals, latest_price
 
     except Exception as e:
-        # 本番ではエラーは無視して空リストを返す（停止させないため）
+        # エラーが起きても停止させない
         return [], None
 
 # ==========================================
