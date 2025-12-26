@@ -5,10 +5,10 @@ import numpy as np
 from datetime import datetime
 
 # ==========================================
-# ページ設定
+# ページ設定 (バージョン番号を追加)
 # ==========================================
 st.set_page_config(page_title="株価シグナル検知アプリ", page_icon="📈", layout="wide")
-st.title("📈 株価トレンド判定アルゴリズム")
+st.title("📈 株価トレンド判定アルゴリズム (ver 3.0)")
 
 # ==========================================
 # 免責事項
@@ -122,6 +122,7 @@ def analyze_recent_week(ticker, market_type, check_days):
         stock_name = ticker_names.get(ticker, ticker)
         
         for i in range(start_idx, len(df)):
+            if i < 0: continue
             signals = []
             c_macd, c_hist, c_rsi, c_close = safe_float(macd[i]), safe_float(hist[i]), safe_float(rsi[i]), safe_float(close[i])
             c_date = dates[i].strftime('%Y-%m-%d')
@@ -175,7 +176,7 @@ def analyze_recent_week(ticker, market_type, check_days):
         return [], None
 
 # ==========================================
-# 3. メイン処理 (完全修正版)
+# 3. メイン処理 (シンプル新規判定 ver3.0)
 # ==========================================
 if st.button("分析を開始する", type="primary"):
     
@@ -234,7 +235,9 @@ if st.button("分析を開始する", type="primary"):
             fresh_list = []
             
             for ticker in df_res['Ticker'].unique():
-                df_t = df_res[df_res['Ticker'] == ticker].sort_values('Date') # 古い順
+                # 【重要】日付順に確実にソートして比較
+                df_t = df_res[df_res['Ticker'] == ticker].sort_values('Date')
+                
                 if df_t.empty: continue
                 
                 # その銘柄の最新シグナル
@@ -243,13 +246,14 @@ if st.button("分析を開始する", type="primary"):
                 l_mkt = latest_row['Country']
                 l_sig_str = latest_row['Signals'] 
                 
-                # 日付チェック
+                # 日付チェック: その市場の最新日か？
                 target_date = latest_jp if l_mkt == "JP" else latest_us
                 if pd.isna(target_date) or l_date != target_date:
                     continue 
                 
                 # --- 方向判定関数 ---
                 def get_direction_set(s):
+                    s = str(s)
                     d_set = set()
                     if "買う" in s: d_set.add("BUY")
                     if "売る" in s: d_set.add("SELL")
@@ -265,11 +269,11 @@ if st.button("分析を開始する", type="primary"):
                     prev_dirs = get_direction_set(prev_sig_str)
                     
                     # 【ここが修正点】中身（セット）が同じなら「継続」とみなす
+                    # 例: {BUY} == {BUY} -> True -> continue (リストに入れない)
                     if current_dirs == prev_dirs:
-                        continue # 完全に方向が同じなのでスキップ
+                        continue 
                     
                     # 転換チェック
-                    # BUY -> SELL または SELL -> BUY
                     if ("BUY" in prev_dirs and "SELL" in current_dirs) or ("SELL" in prev_dirs and "BUY" in current_dirs):
                         prev_label = "買い" if "BUY" in prev_dirs else "売り"
                         status = f"🔄 転換 (前日: {prev_label})"
