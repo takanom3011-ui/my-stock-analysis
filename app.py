@@ -173,7 +173,7 @@ def analyze_recent_week(ticker, market_type, check_days):
         return [], None
 
 # ==========================================
-# 3. メイン処理 (新規抽出ロジック改良版)
+# 3. メイン処理 (シンプル新規判定)
 # ==========================================
 if st.button("分析を開始する", type="primary"):
     
@@ -220,59 +220,61 @@ if st.button("分析を開始する", type="primary"):
             cols = ["Date", "Country", "Name", "Ticker", "Price", "Signals"]
             df_res = df_res[cols].sort_values(by=["Date", "Country", "Ticker"], ascending=[False, True, True])
             
-            # --- 新機能: 市場ごとの「最新日」シグナル抽出 ---
+            # --- 新機能: 単純な「買い/売り」の変化で新規判定 ---
             st.divider()
-            st.subheader("🔔 今日のエントリー候補 (新規発生 & 転換)")
+            st.subheader("🔔 今日のエントリー候補 (新規・転換)")
             
-            # 市場ごとの最新日付を特定 (時差対策)
+            # 市場ごとの最新日付を特定
             latest_jp = df_res[df_res['Country']=="JP"]['Date'].max()
             latest_us = df_res[df_res['Country']=="US"]['Date'].max()
             
             fresh_list = []
             
-            # 銘柄ごとにチェック
             for ticker in df_res['Ticker'].unique():
-                df_t = df_res[df_res['Ticker'] == ticker].sort_values('Date') # 古い順
+                df_t = df_res[df_res['Ticker'] == ticker].sort_values('Date') # 古い順に並べる
                 if df_t.empty: continue
                 
-                # その銘柄の最新シグナルを取得
+                # その銘柄の最新シグナル
                 latest_row = df_t.iloc[-1]
                 l_date = latest_row['Date']
                 l_mkt = latest_row['Country']
-                l_sig = latest_row['Signals']
+                l_sig_str = latest_row['Signals'] # 全文字列
                 
                 # 日付チェック: その市場の最新日か？
                 target_date = latest_jp if l_mkt == "JP" else latest_us
-                if l_date != target_date:
-                    continue # 最新日ではないのでスキップ
+                if pd.isna(target_date) or l_date != target_date:
+                    continue 
                 
-                # 変化チェック: 前回のシグナルと比較
-                status = "新規"
+                # --- シンプル判定ロジック ---
+                # 文字列に「買う」か「売る」が含まれているかで方向を決定
+                def get_direction(s):
+                    if "買う" in s: return "BUY"
+                    if "売る" in s: return "SELL"
+                    return "NONE"
+                
+                current_dir = get_direction(l_sig_str)
+                status = "新規発生" # デフォルト
+                
                 if len(df_t) > 1:
+                    # 前回のシグナルと比較
                     prev_row = df_t.iloc[-2]
-                    prev_sig = prev_row['Signals']
+                    prev_sig_str = prev_row['Signals']
+                    prev_dir = get_direction(prev_sig_str)
                     
-                    if l_sig == prev_sig:
-                        continue # 昨日と同じシグナルなら「新規」ではないのでスキップ
+                    if current_dir == prev_dir:
+                        # 方向が同じなら「継続」なのでスキップ (理由が違っても無視)
+                        continue
                     else:
-                        # シグナルが変わった (例: 売り→買い, 買いA→買いB)
-                        # 特に「売り」と「買い」が入れ替わったかチェック
-                        if ("売る" in prev_sig and "買う" in l_sig) or ("買う" in prev_sig and "売る" in l_sig):
-                            status = f"🔄 転換 (前日: {prev_sig.split(':')[0]})"
-                        else:
-                            status = "新規発生"
-                else:
-                    # 履歴リストに1行しかない = 検索期間内で初めて出た = 新規
-                    status = "新規発生"
-
-                # 登録
+                        # 方向が違うなら「転換」
+                        status = f"🔄 転換 (前日: {prev_dir})"
+                
+                # リストに追加
                 row_dict = latest_row.to_dict()
                 row_dict['Status'] = status
                 fresh_list.append(row_dict)
             
             if fresh_list:
                 df_fresh = pd.DataFrame(fresh_list)
-                # 表示用に列整理
                 cols_fresh = ["Date", "Country", "Status", "Name", "Ticker", "Price", "Signals"]
                 st.dataframe(
                     df_fresh[cols_fresh],
@@ -285,7 +287,7 @@ if st.button("分析を開始する", type="primary"):
                     use_container_width=True, hide_index=True
                 )
             else:
-                st.info("本日、新しく発生したシグナルはありません。（継続中のものは下の履歴をご覧ください）")
+                st.info("本日、新しく発生したシグナル（または転換）はありません。")
             
             # --- 履歴表示 ---
             st.divider()
