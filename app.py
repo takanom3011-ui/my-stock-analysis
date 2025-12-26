@@ -11,17 +11,16 @@ st.set_page_config(page_title="株価シグナル検知アプリ", page_icon="�
 st.title("📈 株価トレンド判定アルゴリズム")
 
 # ==========================================
-# 【重要】免責事項・注意喚起
+# 免責事項
 # ==========================================
 st.warning("""
 **【免責事項・ご利用上の注意】**
-本アプリは、過去の株価データに基づき、特定のアルゴリズム（MACD、RSI等）によるシグナルを機械的に抽出・表示するツールです。
-**特定の銘柄の売買を推奨・勧誘するものではありません。**
-投資に関する最終的な決定は、ご自身の判断と責任において行ってください。本アプリの情報を用いて利用者が行う一切の行為について、開発者は何ら責任を負うものではありません。
+本アプリは機械的な計算結果を表示するものであり、**特定の銘柄の売買を推奨するものではありません。**
+投資判断はご自身の責任において行ってください。
 """)
 
 # ==========================================
-# 0. 銘柄名マッピング (主要銘柄の名称定義)
+# 0. 銘柄名マッピング
 # ==========================================
 ticker_names = {
     # --- 日本株 ---
@@ -62,7 +61,7 @@ ticker_names = {
 }
 
 # ==========================================
-# 1. 銘柄リスト定義 (デフォルトリスト)
+# 1. 銘柄リスト定義
 # ==========================================
 jp_custom = [9202, 9201, 8801, 7203, 7707, 7532, 9984, 8031, 8001, 8002, 6758, 9401, 8802, 8591, 8058, 4385, 6993, 6963, 4091, 3563, 4476, 6098, 4165, 4188, 4755]
 jp_core = [8035, 6857, 6146, 6723, 6920, 6954, 7735, 6501, 6701, 6702, 6503, 7267, 7201, 7270, 7269, 6301, 6367, 7011, 6273, 6113, 8306, 8316, 8411, 8766, 8725, 8604, 9432, 9433, 9434, 2413, 4661, 4689, 3659, 9735, 9983, 3382, 8267, 2801, 2802, 2503, 2914, 4911, 4568, 4502, 4503, 4519, 4523, 4543, 5401, 5411, 1605, 5020, 3402, 4063, 6981, 7974, 9613, 7832, 9501]
@@ -70,23 +69,13 @@ jp_tickers = sorted([f"{t}.T" for t in set(jp_custom + jp_core)])
 us_tickers = sorted(list(set(["NVDA", "AAPL", "MSFT", "AMZN", "TSLA", "META", "GOOGL", "GOOG", "AVGO", "AMD", "QCOM", "TXN", "AMAT", "INTC", "MU", "LRCX", "ADI", "NFLX", "ADBE", "CSCO", "CRM", "PANW", "INTU", "COST", "PEP", "TMUS", "CMCSA", "AMGN", "ISRG", "BKNG", "VRTX"])))
 
 # ==========================================
-# サイドバー設定 (検索機能付き)
+# サイドバー
 # ==========================================
 st.sidebar.header("設定")
-
-target_lists = st.sidebar.multiselect(
-    "銘柄リストから選択", 
-    ["日本株 (主力)", "米国株 (主力)"],
-    default=["日本株 (主力)"]
-)
-
+target_lists = st.sidebar.multiselect("銘柄リストから選択", ["日本株 (主力)", "米国株 (主力)"], default=["日本株 (主力)"])
 st.sidebar.subheader("個別の銘柄コードを追加")
-custom_input = st.sidebar.text_input(
-    "コードを入力 (カンマ区切りで複数可)", 
-    placeholder="例: 9101, TSLA"
-)
-st.sidebar.caption("※日本株は数字4桁でOK (自動で.Tがつきます)")
-
+custom_input = st.sidebar.text_input("コードを入力 (例: 9101, TSLA)")
+st.sidebar.caption("※日本株は数字4桁でOK")
 days_to_check = st.sidebar.slider("検索期間 (過去X日)", 1, 30, 10)
 
 # ==========================================
@@ -98,7 +87,6 @@ def calculate_indicators(df):
     df['MACD'] = exp1 - exp2
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['Hist'] = df['MACD'] - df['Signal']
-    
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -118,91 +106,65 @@ def safe_float(val):
 def analyze_recent_week(ticker, market_type, check_days):
     try:
         df = yf.download(ticker, period="6mo", progress=False)
-        
-        if isinstance(df.columns, pd.MultiIndex):
-             df.columns = df.columns.get_level_values(0)
-            
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         if len(df) < 60: return [], None
         
         df = calculate_indicators(df)
-        
-        macd = df['MACD'].values
-        hist = df['Hist'].values
-        rsi = df['RSI'].values
-        close = df['Close'].values
+        macd, hist, rsi, close = df['MACD'].values, df['Hist'].values, df['RSI'].values, df['Close'].values
         dates = df.index
         
         daily_signals = []
         start_idx = len(df) - check_days
-        
         latest_price = safe_float(close[-1])
         stock_name = ticker_names.get(ticker, ticker)
         
         for i in range(start_idx, len(df)):
             if i < 0: continue
             signals = []
-            
-            # 各指標の値
-            current_macd = safe_float(macd[i])
-            current_hist = safe_float(hist[i])
-            current_rsi = safe_float(rsi[i])
-            current_close = safe_float(close[i])
-            current_date = dates[i].strftime('%Y-%m-%d')
-            prev_hist = safe_float(hist[i-1])
-            prev_macd = safe_float(macd[i-1])
-            prev_sig = safe_float(df['Signal'].values[i-1])
-            curr_sig = safe_float(df['Signal'].values[i])
+            c_macd, c_hist, c_rsi, c_close = safe_float(macd[i]), safe_float(hist[i]), safe_float(rsi[i]), safe_float(close[i])
+            c_date = dates[i].strftime('%Y-%m-%d')
+            p_hist, p_macd = safe_float(hist[i-1]), safe_float(macd[i-1])
+            p_sig = safe_float(df['Signal'].values[i-1])
+            c_sig = safe_float(df['Signal'].values[i])
 
-            # === A. 買いシグナル ===
-            if current_macd < 0 and current_hist > 0:
+            # A. 買いシグナル
+            if c_macd < 0 and c_hist > 0:
                 if np.any(hist[i-12:i-1] < 0):
                     start_look = max(0, i-100)
-                    recent_hist = hist[start_look:i+1]
-                    recent_macd = macd[start_look:i+1]
+                    recent_hist, recent_macd = hist[start_look:i+1], macd[start_look:i+1]
                     signs = np.sign(recent_hist)
                     if signs.ndim > 1: signs = signs.flatten()
                     for k in range(1, len(signs)):
                         if signs[k] == 0: signs[k] = signs[k-1]
                     blocks = []
                     if len(signs) > 0:
-                        c_sign, c_len, s_idx = signs[0], 0, 0
+                        c_s, c_l, s_i = signs[0], 0, 0
                         for k, s in enumerate(signs):
-                            if s == c_sign: c_len += 1
-                            else:
-                                blocks.append({'sign': c_sign, 'len': c_len, 'end': k-1, 'start': s_idx})
-                                c_sign, c_len, s_idx = s, 1, k
-                        blocks.append({'sign': c_sign, 'len': c_len, 'end': len(signs)-1, 'start': s_idx})
+                            if s == c_s: c_l += 1
+                            else: blocks.append({'sign': c_s, 'len': c_l, 'end': k-1, 'start': s_i}); c_s, c_l, s_i = s, 1, k
+                        blocks.append({'sign': c_s, 'len': c_l, 'end': len(signs)-1, 'start': s_i})
                     if len(blocks) >= 4:
                         v2, h, v1 = blocks[-2], blocks[-3], blocks[-4]
-                        if v2['sign'] < 0 and h['sign'] > 0 and v1['sign'] < 0:
-                            if v2['len'] >= 2 and h['len'] >= 2 and v1['len'] >= 2:
-                                v2_min = np.min(recent_macd[v2['start']:v2['end']+1])
-                                v1_min = np.min(recent_macd[v1['start']:v1['end']+1])
-                                if v2_min < v1_min * 0.95:
-                                    signals.append("🟢 買う: 底打ち (Wボトム)")
+                        if v2['sign'] < 0 and h['sign'] > 0 and v1['sign'] < 0 and v2['len'] >= 2 and h['len'] >= 2 and v1['len'] >= 2:
+                            v2_min, v1_min = np.min(recent_macd[v2['start']:v2['end']+1]), np.min(recent_macd[v1['start']:v1['end']+1])
+                            if v2_min < v1_min * 0.95: signals.append("🟢 買う: 底打ち (Wボトム)")
 
-            if current_hist > 0 and current_hist > prev_hist:
+            if c_hist > 0 and c_hist > p_hist:
                 recent_squeeze = False
                 for k in range(2, 7):
-                    h = safe_float(hist[i-k])
-                    m = safe_float(macd[i-k])
+                    h, m = safe_float(hist[i-k]), safe_float(macd[i-k])
                     if h > 0 and h < (abs(m) * 0.10): recent_squeeze = True; break
                 if recent_squeeze: signals.append("🟢 買う: 押し目 (Re-entry)")
 
-            # === B. 売りシグナル ===
-            price_5d = safe_float(close[i-5])
-            rsi_5d = safe_float(rsi[i-5])
-            if (current_close > price_5d) and (current_rsi < rsi_5d) and (current_rsi > 60):
-                signals.append("🔴 売る: 加熱感 (RSI乖離)")
-            if current_hist > 0 and current_hist < (abs(current_macd) * 0.10) and prev_hist > current_hist:
-                signals.append("🔴 売る: スクイーズ")
-            if current_macd < curr_sig and prev_macd >= prev_sig:
-                signals.append("🔴 売る: デッドクロス")
+            # B. 売りシグナル
+            if (c_close > safe_float(close[i-5])) and (c_rsi < safe_float(rsi[i-5])) and (c_rsi > 60): signals.append("🔴 売る: 加熱感 (RSI乖離)")
+            if c_hist > 0 and c_hist < (abs(c_macd) * 0.10) and p_hist > c_hist: signals.append("🔴 売る: スクイーズ")
+            if c_macd < c_sig and p_macd >= p_sig: signals.append("🔴 売る: デッドクロス")
 
             if signals:
                 daily_signals.append({
-                    "Date": current_date, "Country": market_type, "Name": stock_name,
-                    "Ticker": ticker, "Price": round(float(current_close), 2),
+                    "Date": c_date, "Country": market_type, "Name": stock_name,
+                    "Ticker": ticker, "Price": round(float(c_close), 2),
                     "Signals": ", ".join(signals)
                 })
         return daily_signals, latest_price
@@ -211,11 +173,10 @@ def analyze_recent_week(ticker, market_type, check_days):
         return [], None
 
 # ==========================================
-# 3. メイン処理 (検索ロジック追加)
+# 3. メイン処理 (新規抽出ロジック改良版)
 # ==========================================
 if st.button("分析を開始する", type="primary"):
     
-    # リスト作成
     target_tickers = set()
     if "日本株 (主力)" in target_lists:
         for t in jp_tickers: target_tickers.add((t, "JP"))
@@ -226,16 +187,14 @@ if st.button("分析を開始する", type="primary"):
         for t in raw_inputs:
             t_clean = t.strip()
             if not t_clean: continue
-            if t_clean.isdigit() and len(t_clean) == 4:
-                final_ticker = f"{t_clean}.T"; market = "JP"
-            else:
-                final_ticker = t_clean.upper(); market = "JP" if ".T" in final_ticker else "US"
+            if t_clean.isdigit() and len(t_clean) == 4: final_ticker, market = f"{t_clean}.T", "JP"
+            else: final_ticker, market = t_clean.upper(), ("JP" if ".T" in t_clean.upper() else "US")
             target_tickers.add((final_ticker, market))
     
     final_target_list = sorted(list(target_tickers))
     
     if not final_target_list:
-        st.warning("銘柄リストを選択するか、銘柄コードを入力してください。")
+        st.warning("銘柄を選択してください。")
     else:
         st.write(f"全 {len(final_target_list)} 銘柄をスキャン中...")
         my_bar = st.progress(0)
@@ -248,10 +207,8 @@ if st.button("分析を開始する", type="primary"):
         for idx, (ticker, mkt) in enumerate(final_target_list):
             status_text.text(f"Scanning: {ticker} ({idx+1}/{total})")
             my_bar.progress((idx + 1) / total)
-            
             events, price = analyze_recent_week(ticker, mkt, days_to_check)
             all_events.extend(events)
-            
             s_name = ticker_names.get(ticker, ticker)
             if price: scanned_data.append({"Name": s_name, "Ticker": ticker, "Latest Price": price})
         
@@ -261,79 +218,95 @@ if st.button("分析を開始する", type="primary"):
         if all_events:
             df_res = pd.DataFrame(all_events)
             cols = ["Date", "Country", "Name", "Ticker", "Price", "Signals"]
-            df_res = df_res[cols]
+            df_res = df_res[cols].sort_values(by=["Date", "Country", "Ticker"], ascending=[False, True, True])
             
-            # --- ここが新機能：最新日の初出シグナル抽出 ---
+            # --- 新機能: 市場ごとの「最新日」シグナル抽出 ---
             st.divider()
+            st.subheader("🔔 今日のエントリー候補 (新規発生 & 転換)")
             
-            # 1. データ内の最新日付を取得
-            latest_date = df_res['Date'].max()
+            # 市場ごとの最新日付を特定 (時差対策)
+            latest_jp = df_res[df_res['Country']=="JP"]['Date'].max()
+            latest_us = df_res[df_res['Country']=="US"]['Date'].max()
             
-            # 2. 最新日のデータと、それ以前のデータを分ける
-            df_latest = df_res[df_res['Date'] == latest_date].copy()
-            df_past = df_res[df_res['Date'] < latest_date].copy()
+            fresh_list = []
             
-            # 3. 「今日初めて出たシグナル」だけを残すフィルター
-            # (同じ銘柄で、過去数日以内に同じシグナルが出ていないかチェック)
-            fresh_indices = []
-            for idx, row in df_latest.iterrows():
-                ticker = row['Ticker']
-                sig = row['Signals']
+            # 銘柄ごとにチェック
+            for ticker in df_res['Ticker'].unique():
+                df_t = df_res[df_res['Ticker'] == ticker].sort_values('Date') # 古い順
+                if df_t.empty: continue
                 
-                # 過去データの中に、同じ銘柄で同じシグナルがあるか確認
-                # (例: 昨日も「Re-entry」が出ていたら、今日は除外する)
-                past_occurrence = df_past[
-                    (df_past['Ticker'] == ticker) & 
-                    (df_past['Signals'] == sig)
-                ]
+                # その銘柄の最新シグナルを取得
+                latest_row = df_t.iloc[-1]
+                l_date = latest_row['Date']
+                l_mkt = latest_row['Country']
+                l_sig = latest_row['Signals']
                 
-                if len(past_occurrence) == 0:
-                    fresh_indices.append(idx)
+                # 日付チェック: その市場の最新日か？
+                target_date = latest_jp if l_mkt == "JP" else latest_us
+                if l_date != target_date:
+                    continue # 最新日ではないのでスキップ
+                
+                # 変化チェック: 前回のシグナルと比較
+                status = "新規"
+                if len(df_t) > 1:
+                    prev_row = df_t.iloc[-2]
+                    prev_sig = prev_row['Signals']
+                    
+                    if l_sig == prev_sig:
+                        continue # 昨日と同じシグナルなら「新規」ではないのでスキップ
+                    else:
+                        # シグナルが変わった (例: 売り→買い, 買いA→買いB)
+                        # 特に「売り」と「買い」が入れ替わったかチェック
+                        if ("売る" in prev_sig and "買う" in l_sig) or ("買う" in prev_sig and "売る" in l_sig):
+                            status = f"🔄 転換 (前日: {prev_sig.split(':')[0]})"
+                        else:
+                            status = "新規発生"
+                else:
+                    # 履歴リストに1行しかない = 検索期間内で初めて出た = 新規
+                    status = "新規発生"
+
+                # 登録
+                row_dict = latest_row.to_dict()
+                row_dict['Status'] = status
+                fresh_list.append(row_dict)
             
-            df_fresh = df_latest.loc[fresh_indices]
-            
-            # --- 表示部 ---
-            st.subheader(f"🔔 本日 ({latest_date}) の新規シグナル")
-            st.caption("※過去数日間に同じシグナルが出ておらず、今日「初めて」発生した銘柄のみを表示します（エントリー候補）。")
-            
-            if not df_fresh.empty:
+            if fresh_list:
+                df_fresh = pd.DataFrame(fresh_list)
+                # 表示用に列整理
+                cols_fresh = ["Date", "Country", "Status", "Name", "Ticker", "Price", "Signals"]
                 st.dataframe(
-                    df_fresh,
+                    df_fresh[cols_fresh],
                     column_config={
-                        "Date": "日付", "Country": "市場", "Name": "銘柄名",
-                        "Ticker": "コード", "Price": st.column_config.NumberColumn("株価", format="%.2f"),
-                        "Signals": "新規判定",
+                        "Date": "日付", "Country": "市場", "Status": "状態",
+                        "Name": "銘柄名", "Ticker": "コード", 
+                        "Price": st.column_config.NumberColumn("株価", format="%.2f"),
+                        "Signals": "判定内容",
                     },
                     use_container_width=True, hide_index=True
                 )
             else:
-                st.info("本日の「新規」シグナルはありません。（継続中のシグナルは下の履歴で確認できます）")
-
-            st.divider()
-            st.subheader("📅 過去のシグナル履歴（参考）")
-            st.caption("※継続的に出ているシグナルや、過去数日間の全履歴です。")
+                st.info("本日、新しく発生したシグナルはありません。（継続中のものは下の履歴をご覧ください）")
             
-            df_res_sorted = df_res.sort_values(by=["Date", "Country", "Ticker"], ascending=[False, True, True])
+            # --- 履歴表示 ---
+            st.divider()
+            st.subheader("📅 過去のシグナル履歴")
             st.dataframe(
-                df_res_sorted,
+                df_res,
                 column_config={
-                    "Date": "日付", "Country": "市場", "Name": "銘柄名",
-                    "Ticker": "コード", "Price": st.column_config.NumberColumn("株価", format="%.2f"),
+                    "Date": "日付", "Country": "市場", "Name": "銘柄名", "Ticker": "コード",
+                    "Price": st.column_config.NumberColumn("株価", format="%.2f"),
                     "Signals": "判定",
                 },
                 use_container_width=True, hide_index=True
             )
-            
-            csv = df_res_sorted.to_csv(index=False).encode('utf-8')
+            csv = df_res.to_csv(index=False).encode('utf-8')
             st.download_button("全履歴CSVをダウンロード", csv, 'stock_signals.csv', 'text/csv')
         else:
             st.info("指定期間内にシグナルは検出されませんでした。")
 
         with st.expander("詳細：スキャン済み銘柄の最新株価"):
-            if scanned_data:
-                st.dataframe(pd.DataFrame(scanned_data), use_container_width=True)
-            else:
-                st.write("データ取得に成功した銘柄がありませんでした。")
+            if scanned_data: st.dataframe(pd.DataFrame(scanned_data), use_container_width=True)
+            else: st.write("データ取得不可")
 
 else:
     st.write("左のサイドバーでリストを選択するか、コードを入力して「分析を開始する」を押してください。")
