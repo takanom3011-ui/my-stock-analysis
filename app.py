@@ -74,14 +74,12 @@ us_tickers = sorted(list(set(["NVDA", "AAPL", "MSFT", "AMZN", "TSLA", "META", "G
 # ==========================================
 st.sidebar.header("設定")
 
-# 1. 既存リストからの選択
 target_lists = st.sidebar.multiselect(
     "銘柄リストから選択", 
     ["日本株 (主力)", "米国株 (主力)"],
     default=["日本株 (主力)"]
 )
 
-# 2. 自由入力欄
 st.sidebar.subheader("個別の銘柄コードを追加")
 custom_input = st.sidebar.text_input(
     "コードを入力 (カンマ区切りで複数可)", 
@@ -92,7 +90,7 @@ st.sidebar.caption("※日本株は数字4桁でOK (自動で.Tがつきます)"
 days_to_check = st.sidebar.slider("検索期間 (過去X日)", 1, 30, 10)
 
 # ==========================================
-# 2. ロジック関数 (変更なし)
+# 2. ロジック関数
 # ==========================================
 def calculate_indicators(df):
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
@@ -138,7 +136,7 @@ def analyze_recent_week(ticker, market_type, check_days):
         start_idx = len(df) - check_days
         
         latest_price = safe_float(close[-1])
-        stock_name = ticker_names.get(ticker, ticker) # 辞書になければコードを表示
+        stock_name = ticker_names.get(ticker, ticker)
         
         for i in range(start_idx, len(df)):
             if i < 0: continue
@@ -217,35 +215,23 @@ def analyze_recent_week(ticker, market_type, check_days):
 # ==========================================
 if st.button("分析を開始する", type="primary"):
     
-    # 1. 検索対象リストを作成 (セットを使って重複排除)
+    # リスト作成
     target_tickers = set()
-    
-    # A. 既存リストからの追加
     if "日本株 (主力)" in target_lists:
         for t in jp_tickers: target_tickers.add((t, "JP"))
     if "米国株 (主力)" in target_lists:
         for t in us_tickers: target_tickers.add((t, "US"))
-        
-    # B. 自由入力からの追加
     if custom_input:
-        # 全角を半角に、カンマ区切りをリスト化
         raw_inputs = custom_input.replace("、", ",").replace(" ", ",").split(",")
         for t in raw_inputs:
             t_clean = t.strip()
             if not t_clean: continue
-            
-            # 日本株コード (4桁数字) なら自動で .T をつける
             if t_clean.isdigit() and len(t_clean) == 4:
-                final_ticker = f"{t_clean}.T"
-                market = "JP"
+                final_ticker = f"{t_clean}.T"; market = "JP"
             else:
-                final_ticker = t_clean.upper()
-                # .Tが含まれていれば日本株扱い、なければ米国株扱い
-                market = "JP" if ".T" in final_ticker else "US"
-            
+                final_ticker = t_clean.upper(); market = "JP" if ".T" in final_ticker else "US"
             target_tickers.add((final_ticker, market))
     
-    # リスト化してソート
     final_target_list = sorted(list(target_tickers))
     
     if not final_target_list:
@@ -276,11 +262,60 @@ if st.button("分析を開始する", type="primary"):
             df_res = pd.DataFrame(all_events)
             cols = ["Date", "Country", "Name", "Ticker", "Price", "Signals"]
             df_res = df_res[cols]
-            df_res = df_res.sort_values(by=["Date", "Country", "Ticker"], ascending=[False, True, True])
             
-            st.success(f"{len(df_res)} 件のシグナルを検出しました。")
+            # --- ここが新機能：最新日の初出シグナル抽出 ---
+            st.divider()
+            
+            # 1. データ内の最新日付を取得
+            latest_date = df_res['Date'].max()
+            
+            # 2. 最新日のデータと、それ以前のデータを分ける
+            df_latest = df_res[df_res['Date'] == latest_date].copy()
+            df_past = df_res[df_res['Date'] < latest_date].copy()
+            
+            # 3. 「今日初めて出たシグナル」だけを残すフィルター
+            # (同じ銘柄で、過去数日以内に同じシグナルが出ていないかチェック)
+            fresh_indices = []
+            for idx, row in df_latest.iterrows():
+                ticker = row['Ticker']
+                sig = row['Signals']
+                
+                # 過去データの中に、同じ銘柄で同じシグナルがあるか確認
+                # (例: 昨日も「Re-entry」が出ていたら、今日は除外する)
+                past_occurrence = df_past[
+                    (df_past['Ticker'] == ticker) & 
+                    (df_past['Signals'] == sig)
+                ]
+                
+                if len(past_occurrence) == 0:
+                    fresh_indices.append(idx)
+            
+            df_fresh = df_latest.loc[fresh_indices]
+            
+            # --- 表示部 ---
+            st.subheader(f"🔔 本日 ({latest_date}) の新規シグナル")
+            st.caption("※過去数日間に同じシグナルが出ておらず、今日「初めて」発生した銘柄のみを表示します（エントリー候補）。")
+            
+            if not df_fresh.empty:
+                st.dataframe(
+                    df_fresh,
+                    column_config={
+                        "Date": "日付", "Country": "市場", "Name": "銘柄名",
+                        "Ticker": "コード", "Price": st.column_config.NumberColumn("株価", format="%.2f"),
+                        "Signals": "新規判定",
+                    },
+                    use_container_width=True, hide_index=True
+                )
+            else:
+                st.info("本日の「新規」シグナルはありません。（継続中のシグナルは下の履歴で確認できます）")
+
+            st.divider()
+            st.subheader("📅 過去のシグナル履歴（参考）")
+            st.caption("※継続的に出ているシグナルや、過去数日間の全履歴です。")
+            
+            df_res_sorted = df_res.sort_values(by=["Date", "Country", "Ticker"], ascending=[False, True, True])
             st.dataframe(
-                df_res,
+                df_res_sorted,
                 column_config={
                     "Date": "日付", "Country": "市場", "Name": "銘柄名",
                     "Ticker": "コード", "Price": st.column_config.NumberColumn("株価", format="%.2f"),
@@ -288,8 +323,9 @@ if st.button("分析を開始する", type="primary"):
                 },
                 use_container_width=True, hide_index=True
             )
-            csv = df_res.to_csv(index=False).encode('utf-8')
-            st.download_button("CSVデータをダウンロード", csv, 'stock_signals.csv', 'text/csv')
+            
+            csv = df_res_sorted.to_csv(index=False).encode('utf-8')
+            st.download_button("全履歴CSVをダウンロード", csv, 'stock_signals.csv', 'text/csv')
         else:
             st.info("指定期間内にシグナルは検出されませんでした。")
 
