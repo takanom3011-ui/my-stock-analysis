@@ -114,12 +114,14 @@ def analyze_recent_week(ticker, market_type, check_days):
         dates = df.index
         
         daily_signals = []
-        start_idx = len(df) - check_days
+        # 【重要】比較用に「指定期間 + 1日」前からチェックする
+        start_idx = len(df) - (check_days + 1)
+        if start_idx < 0: start_idx = 0
+
         latest_price = safe_float(close[-1])
         stock_name = ticker_names.get(ticker, ticker)
         
         for i in range(start_idx, len(df)):
-            if i < 0: continue
             signals = []
             c_macd, c_hist, c_rsi, c_close = safe_float(macd[i]), safe_float(hist[i]), safe_float(rsi[i]), safe_float(close[i])
             c_date = dates[i].strftime('%Y-%m-%d')
@@ -173,7 +175,7 @@ def analyze_recent_week(ticker, market_type, check_days):
         return [], None
 
 # ==========================================
-# 3. メイン処理 (シンプル新規判定)
+# 3. メイン処理 (完全修正版)
 # ==========================================
 if st.button("分析を開始する", type="primary"):
     
@@ -220,9 +222,10 @@ if st.button("分析を開始する", type="primary"):
             cols = ["Date", "Country", "Name", "Ticker", "Price", "Signals"]
             df_res = df_res[cols].sort_values(by=["Date", "Country", "Ticker"], ascending=[False, True, True])
             
-            # --- 新機能: 単純な「買い/売り」の変化で新規判定 ---
+            # --- 新機能: 方向だけを見る厳密な新規判定 ---
             st.divider()
             st.subheader("🔔 今日のエントリー候補 (新規・転換)")
+            st.caption("※「買い」または「売り」の方向が**今日初めて**発生した銘柄のみ表示します。（理由が変わっても方向が同じなら除外）")
             
             # 市場ごとの最新日付を特定
             latest_jp = df_res[df_res['Country']=="JP"]['Date'].max()
@@ -231,42 +234,45 @@ if st.button("分析を開始する", type="primary"):
             fresh_list = []
             
             for ticker in df_res['Ticker'].unique():
-                df_t = df_res[df_res['Ticker'] == ticker].sort_values('Date') # 古い順に並べる
+                df_t = df_res[df_res['Ticker'] == ticker].sort_values('Date') # 古い順
                 if df_t.empty: continue
                 
                 # その銘柄の最新シグナル
                 latest_row = df_t.iloc[-1]
                 l_date = latest_row['Date']
                 l_mkt = latest_row['Country']
-                l_sig_str = latest_row['Signals'] # 全文字列
+                l_sig_str = latest_row['Signals'] 
                 
-                # 日付チェック: その市場の最新日か？
+                # 日付チェック
                 target_date = latest_jp if l_mkt == "JP" else latest_us
                 if pd.isna(target_date) or l_date != target_date:
                     continue 
                 
-                # --- シンプル判定ロジック ---
-                # 文字列に「買う」か「売る」が含まれているかで方向を決定
-                def get_direction(s):
-                    if "買う" in s: return "BUY"
-                    if "売る" in s: return "SELL"
-                    return "NONE"
+                # --- 方向判定関数 ---
+                def get_direction_set(s):
+                    d_set = set()
+                    if "買う" in s: d_set.add("BUY")
+                    if "売る" in s: d_set.add("SELL")
+                    return d_set
                 
-                current_dir = get_direction(l_sig_str)
+                current_dirs = get_direction_set(l_sig_str)
                 status = "新規発生" # デフォルト
                 
                 if len(df_t) > 1:
                     # 前回のシグナルと比較
                     prev_row = df_t.iloc[-2]
                     prev_sig_str = prev_row['Signals']
-                    prev_dir = get_direction(prev_sig_str)
+                    prev_dirs = get_direction_set(prev_sig_str)
                     
-                    if current_dir == prev_dir:
-                        # 方向が同じなら「継続」なのでスキップ (理由が違っても無視)
-                        continue
-                    else:
-                        # 方向が違うなら「転換」
-                        status = f"🔄 転換 (前日: {prev_dir})"
+                    # 【ここが修正点】中身（セット）が同じなら「継続」とみなす
+                    if current_dirs == prev_dirs:
+                        continue # 完全に方向が同じなのでスキップ
+                    
+                    # 転換チェック
+                    # BUY -> SELL または SELL -> BUY
+                    if ("BUY" in prev_dirs and "SELL" in current_dirs) or ("SELL" in prev_dirs and "BUY" in current_dirs):
+                        prev_label = "買い" if "BUY" in prev_dirs else "売り"
+                        status = f"🔄 転換 (前日: {prev_label})"
                 
                 # リストに追加
                 row_dict = latest_row.to_dict()
